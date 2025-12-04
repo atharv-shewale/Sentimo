@@ -3,291 +3,269 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Sentimo - Emotion Detection (Client-side)</title>
+<title>Sentimo - Emotion Detection</title>
 
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+
 <style>
-  body { background: linear-gradient(135deg,#a1c4fd,#c2e9fb); text-align:center; font-family:"Poppins",sans-serif; padding:20px; margin:0; }
-  h1{font-size:2.2em;color:#3c3b6e;margin:6px 0;}
-  #project-title{color:#f9a825;font-size:1.1em;margin-bottom:12px;}
-  #camera-container{width:100%; max-width:520px;margin:auto;border-radius:16px;overflow:hidden;background:white;box-shadow:0 4px 14px rgba(0,0,0,0.12); display:none;}
-  #camera-container video, #camera-container canvas { width:100%; height:auto; display:block; }
-  #emotion-name{margin-top:12px;font-size:1.6em;color:#3c3b6e;}
-  #joke-box{display:none;background:white;padding:12px;margin-top:14px;border-radius:10px;max-width:520px;margin:auto;font-size:1.05em;box-shadow:0 4px 10px rgba(0,0,0,.12);}
-  #joke-button{display:none;margin-top:12px;padding:10px 20px;border:none;border-radius:20px;background:#6c5b7b;color:white;font-size:1.0em;cursor:pointer;}
-  #start-btn{padding:12px 26px;font-size:1.05em;border:none;border-radius:22px;background:#3c3b6e;color:white;cursor:pointer;margin-top:18px;}
+  body { background: linear-gradient(135deg,#a1c4fd,#c2e9fb); text-align:center; 
+         font-family:"Poppins",sans-serif; padding:20px; margin:0; }
+  h1 { font-size:2.2em; color:#3c3b6e; margin:6px 0; }
+  #project-title { color:#f9a825; font-size:1.1em; margin-bottom:12px; }
+
+  #camera-container { 
+    width:100%; max-width:520px; margin:auto; border-radius:16px;
+    overflow:hidden; background:white; box-shadow:0 4px 14px rgba(0,0,0,0.12);
+    display:none; position:relative;
+  }
+
+  /* Hide raw video completely */
+  #camera-container video {
+    display:none !important;
+  }
+
+  /* Only canvas is visible */
+  #camera-container canvas {
+    display:block;
+    width:100%;
+    height:auto;
+  }
+
+  #emotion-name { margin-top:12px; font-size:1.6em; color:#3c3b6e; }
+
+  #joke-box {
+    display:none; background:white; padding:12px; margin-top:14px;
+    border-radius:10px; max-width:520px; margin:auto; font-size:1.05em;
+    box-shadow:0 4px 10px rgba(0,0,0,.12);
+  }
+
+  #joke-button {
+    display:none; margin-top:12px; padding:10px 20px;
+    border:none; border-radius:20px; background:#6c5b7b;
+    color:white; font-size:1.0em; cursor:pointer;
+  }
+
+  #start-btn {
+    padding:12px 26px; font-size:1.05em; border:none; border-radius:22px;
+    background:#3c3b6e; color:white; cursor:pointer; margin-top:18px;
+  }
+
   #loading { margin-top:6px; color:#333; font-size:0.95em; display:none; }
-  footer { margin-top:18px; color:#333; font-size:0.9em; }
 </style>
 </head>
+
 <body>
-  <h1>Sentimo</h1>
-  <div id="project-title">Client-side Emotion Detection</div>
 
-  <button id="start-btn">Start Camera & Detection</button>
-  <div id="loading">Starting camera...</div>
+<h1>Sentimo</h1>
+<div id="project-title">Client-side Emotion Detection</div>
 
-  <div id="camera-container">
-    <video id="input_video" autoplay playsinline muted></video>
-    <canvas id="output_canvas"></canvas>
-  </div>
+<button id="start-btn">Start Camera & Detection</button>
+<div id="loading">Starting camera...</div>
 
-  <div id="emotion-name">Waiting to start...</div>
+<div id="camera-container">
+  <video id="input_video" autoplay playsinline muted></video>
+  <canvas id="output_canvas"></canvas>
+</div>
 
-  <div id="joke-box"></div>
-  <button id="joke-button">Tell me a joke</button>
+<div id="emotion-name">Waiting to start...</div>
 
-  <audio id="sleepy-sound" src="/static/sleep.mp3" preload="auto"></audio>
+<div id="joke-box"></div>
+<button id="joke-button">Tell me a joke</button>
 
-  <!-- MediaPipe FaceMesh + utils (CDN) -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<audio id="sleepy-sound" src="/static/sleep.mp3" preload="auto"></audio>
 
-  <script>
-  // -------- Globals and DOM --------
-  const startBtn = document.getElementById("start-btn");
-  const loadingEl = document.getElementById("loading");
-  const videoElement = document.getElementById("input_video");
-  const canvasElement = document.getElementById("output_canvas");
-  const canvasCtx = canvasElement.getContext("2d");
-  const emotionText = document.getElementById("emotion-name");
-  const jokeBox = document.getElementById("joke-box");
-  const jokeBtn = document.getElementById("joke-button");
-  const sleepySound = document.getElementById("sleepy-sound");
+<!-- MediaPipe FaceMesh libraries -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
 
-  // Sample jokes (kept from server)
-  const JOKES = [
-    "Why don't scientists trust atoms? Because they make up everything!",
-    "Why did the bicycle fall over? Because it was two-tired!",
-    "Why don’t skeletons fight each other? They don’t have the guts.",
-    "What do you call fake spaghetti? An impasta!",
-    "Why did the math book look sad? Because it had too many problems!"
-  ];
+<script>
+/* DOM References */
+const startBtn = document.getElementById("start-btn");
+const loadingEl = document.getElementById("loading");
+const videoElement = document.getElementById("input_video");
+const canvasElement = document.getElementById("output_canvas");
+const canvasCtx = canvasElement.getContext("2d");
+const emotionText = document.getElementById("emotion-name");
+const jokeBox = document.getElementById("joke-box");
+const jokeBtn = document.getElementById("joke-button");
+const sleepySound = document.getElementById("sleepy-sound");
 
-  let audioUnlocked = false;
-  let lastEmotion = "";
+let audioUnlocked = false;
+let lastEmotion = "";
 
-  // Unlock audio using Start button gesture
-  async function unlockAudio() {
-    try {
-      await sleepySound.play();
-      sleepySound.pause();
-      sleepySound.currentTime = 0;
-      audioUnlocked = true;
-      console.info("Audio unlocked");
-    } catch (e) {
-      console.warn("Audio unlock attempt failed:", e);
-    }
+/* Unlock audio after user gesture */
+async function unlockAudio() {
+  try {
+    await sleepySound.play();
+    sleepySound.pause();
+    sleepySound.currentTime = 0;
+    audioUnlocked = true;
+  } catch (e) {
+    console.warn("Audio unlock failed:", e);
   }
+}
 
-  // -------- Feature extraction (JS port of your Python) --------
-  function get_features_from_landmarks(landmarks) {
-    // landmarks: array of {x, y, z} in normalized image coords
-    // build coords array [ [x,y], ... ]
-    const coords = landmarks.map(p => [p.x, p.y]);
-    const xs = coords.map(c => c[0]);
-    const ys = coords.map(c => c[1]);
-    const minx = Math.min(...xs), maxx = Math.max(...xs);
-    const miny = Math.min(...ys), maxy = Math.max(...ys);
-    const width = Math.max(maxx - minx, 1e-6);
-    const height = Math.max(maxy - miny, 1e-6);
+/* Jokes */
+const JOKES = [
+  "Why don't scientists trust atoms? Because they make up everything!",
+  "Why did the bicycle fall over? Because it was two-tired!",
+  "Why don’t skeletons fight each other? They don’t have the guts.",
+  "What do you call fake spaghetti? An impasta!",
+  "Why did the math book look sad? Because it had too many problems!"
+];
 
-    const dist = (i,j) => {
-      const dx = (coords[i][0] - coords[j][0]) / width;
-      const dy = (coords[i][1] - coords[j][1]) / height;
-      return Math.hypot(dx, dy);
-    };
+/* FEATURE EXTRACTION — JS version of your Python */
+function get_features_from_landmarks(landmarks) {
+  const coords = landmarks.map(p => [p.x, p.y]);
+  const xs = coords.map(c => c[0]);
+  const ys = coords.map(c => c[1]);
+  const width = Math.max(Math.max(...xs) - Math.min(...xs), 1e-6);
+  const height = Math.max(Math.max(...ys) - Math.min(...ys), 1e-6);
 
-    const upper_lip = 13, lower_lip = 14;
-    const left_mouth = 61, right_mouth = 291;
-    const eye_outer = 33, eye_inner = 133;
-    const eye_top = 159, eye_bottom = 145;
-
-    const mouth_open = dist(upper_lip, lower_lip);
-    const mouth_width = dist(left_mouth, right_mouth);
-    const eye_vertical = dist(eye_top, eye_bottom);
-    const eye_horizontal = dist(eye_outer, eye_inner);
-    const eye_open = eye_vertical / (eye_horizontal + 1e-6);
-
-    const nose_idx = 1;
-    const nose = coords[nose_idx];
-    const centerx = xs.reduce((a,b)=>a+b,0)/xs.length;
-    const centery = ys.reduce((a,b)=>a+b,0)/ys.length;
-    const nose_cod = (nose[1] - centery) / height;
-
-    const inner_eye_dist = dist(133, 362);
-    const left_lip_y = coords[left_mouth][1];
-    const right_lip_y = coords[right_mouth][1];
-    const lip_asym = (left_lip_y - right_lip_y) / height;
-
-    const left_side = coords[234][1];
-    const right_side = coords[454][1];
-    const head_tilt = (left_side - right_side) / height;
-
-    return { mouth_open, mouth_width, eye_open, nose_cod, inner_eye_dist, lip_asym, head_tilt };
-  }
-
-  // -------- Emotion classifier (JS port of your Python rules) --------
-  function classify_emotion_js(features) {
-    const { mouth_open, mouth_width, eye_open, nose_cod, inner_eye_dist, lip_asym, head_tilt } = features;
-
-    const big_mouth_open = mouth_open > 0.18;
-    const strong_smile = mouth_width > 0.45 && eye_open > 0.18;
-    const relaxed_smile = mouth_width > 0.045 && eye_open > 0.17;
-    const eyes_very_open = eye_open > 0.30;
-    const eyes_narrow = eye_open < 0.18;
-    const eyes_very_narrow = eye_open < 0.14;
-    const head_down = nose_cod > 0.03;
-    const head_up = nose_cod < -0.03;
-    const strong_head_tilt = Math.abs(head_tilt) > 0.05;
-    const lip_asym_strong = Math.abs(lip_asym) > 0.03;
-
-    if (big_mouth_open && eyes_narrow) return "sleepy";
-    if (eyes_very_open && mouth_open > 0.08) return "shocked";
-    if (mouth_open > 0.10 && eye_open > 0.25) return "surprised";
-    if (strong_smile) return "smile";
-    if (mouth_width > 0.39 && eye_open >= 0.17) return "happy";
-    if (0.15 <= eye_open && eye_open < 0.20 && mouth_width < 0.04 && !big_mouth_open) return "sad";
-    if (eyes_narrow && inner_eye_dist < 0.27 && mouth_width < 0.04 && !big_mouth_open) return "angry";
-    if (lip_asym_strong && mouth_open < 0.06) return "disgust";
-    if (eyes_narrow) {
-      if (head_down) return "sleepy and looking down";
-      if (head_up) return "sleepy";
-      return "sleepy";
-    }
-    if (head_down && 0.18 <= eye_open && eye_open <= 0.26 && mouth_open < 0.06) return "thinking";
-    if (strong_head_tilt && eye_open > 0.18) return "confused";
-    return "neutral";
-  }
-
-  // -------- MediaPipe initialization --------
-  // Create FaceMesh
-  const faceMesh = new FaceMesh({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
-  });
-  faceMesh.setOptions({
-    maxNumFaces: 1,
-    refineLandmarks: true,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
-  });
-
-  // Camera helper from MediaPipe
-  let mpCamera = null;
-
-  function onResults(results) {
-    // draw the camera frame + landmark overlay
-    canvasElement.width = videoElement.videoWidth;
-    canvasElement.height = videoElement.videoHeight;
-    canvasCtx.save();
-    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-    // draw the input image
-    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-    if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-      // no face found
-      emotionText.textContent = "No face";
-      jokeBox.style.display = "none";
-      lastEmotion = "No face";
-      canvasCtx.restore();
-      return;
-    }
-
-    const lm = results.multiFaceLandmarks[0]; // array of {x,y,z}
-    // draw landmarks if you want
-    drawConnectors(canvasCtx, lm, FACEMESH_TESSELATION, { color: '#C0C0C070', lineWidth: 1 });
-    drawLandmarks(canvasCtx, lm, { color: '#FF3030', radius: 1 });
-
-    // compute features & classify
-    try {
-      const features = get_features_from_landmarks(lm);
-      const emotion = classify_emotion_js(features);
-      emotionText.textContent = emotion;
-
-      // show joke only on sad
-      if (emotion === "sad") {
-        jokeBox.style.display = "block";
-        jokeBox.textContent = JOKES[Math.floor(Math.random() * JOKES.length)];
-        jokeBtn.style.display = "inline-block";
-      } else {
-        jokeBox.style.display = "none";
-        jokeBtn.style.display = "none";
-      }
-
-      // play sleepy sound locally when detected
-      const isSleepy = (emotion || "").toLowerCase().includes("sleepy");
-      const wasSleepy = (lastEmotion || "").toLowerCase().includes("sleepy");
-
-      if (isSleepy && !wasSleepy) {
-        if (audioUnlocked) {
-          // play immediately
-          sleepySound.currentTime = 0;
-          sleepySound.play().catch(err => console.warn("sleep sound play failed", err));
-        } else {
-          // try to unlock
-          unlockAudio().then(() => {
-            sleepySound.currentTime = 0;
-            sleepySound.play().catch(err => console.warn("sleep sound play after unlock failed", err));
-          });
-        }
-      }
-
-      if (!isSleepy && wasSleepy) {
-        try { sleepySound.pause(); sleepySound.currentTime = 0; } catch(e){/*ignore*/ }
-      }
-
-      lastEmotion = emotion;
-    } catch (err) {
-      console.error("Error in classification:", err);
-    }
-
-    canvasCtx.restore();
-  }
-
-  faceMesh.onResults(onResults);
-
-  // start camera and mediapipe
-  async function startCameraAndModel() {
-    loadingEl.style.display = "block";
-    startBtn.disabled = true;
-    try {
-      mpCamera = new Camera(videoElement, {
-        onFrame: async () => {
-          await faceMesh.send({ image: videoElement });
-        },
-        width: 640,
-        height: 480
-      });
-      mpCamera.start();
-      // unlock audio after user gesture
-      await unlockAudio();
-      document.getElementById("camera-container").style.display = "block";
-      loadingEl.style.display = "none";
-    } catch (e) {
-      console.error("Camera start error:", e);
-      loadingEl.textContent = "Camera error: " + (e.message || e);
-      startBtn.disabled = false;
-    }
-  }
-
-  // Start button handler
-  startBtn.addEventListener("click", async () => {
-    await startCameraAndModel();
-  });
-
-  // Joke button
-  jokeBtn.addEventListener("click", () => {
-    alert(jokeBox.textContent);
-  });
-
-  // quick manual test helper in console: call `window.runTest()` to see things change
-  window.runTest = () => {
-    emotionText.textContent = "manual test";
-    sleepySound.play().then(()=>console.log("manual play OK")).catch(e=>console.warn("manual play failed:",e));
+  const dist = (i,j) => {
+    const dx = (coords[i][0] - coords[j][0]) / width;
+    const dy = (coords[i][1] - coords[j][1]) / height;
+    return Math.hypot(dx, dy);
   };
 
-  </script>
+  return {
+    mouth_open: dist(13, 14),
+    mouth_width: dist(61, 291),
+    eye_open: dist(159,145) / (dist(33,133) + 1e-6),
+    nose_cod: (coords[1][1] - (ys.reduce((a,b)=>a+b)/ys.length)) / height,
+    inner_eye_dist: dist(133,362),
+    lip_asym: (coords[61][1] - coords[291][1]) / height,
+    head_tilt: (coords[234][1] - coords[454][1]) / height
+  };
+}
+
+/* CLASSIFIER — JS version of your logic */
+function classify_emotion_js(f) {
+  const {
+    mouth_open, mouth_width, eye_open,
+    nose_cod, inner_eye_dist, lip_asym, head_tilt
+  } = f;
+
+  const big_mouth_open = mouth_open > 0.18;
+  const strong_smile = mouth_width > 0.45 && eye_open > 0.18;
+  const eyes_very_open = eye_open > 0.30;
+  const eyes_narrow = eye_open < 0.18;
+
+  if (big_mouth_open && eyes_narrow) return "sleepy";
+  if (eyes_very_open && mouth_open > 0.08) return "shocked";
+  if (mouth_open > 0.10 && eye_open > 0.25) return "surprised";
+  if (strong_smile) return "smile";
+  if (mouth_width > 0.39 && eye_open >= 0.17) return "happy";
+  if (0.15 <= eye_open && eye_open < 0.20 && mouth_width < 0.04 && !big_mouth_open) return "sad";
+  if (eyes_narrow && inner_eye_dist < 0.27 && mouth_width < 0.04 && !big_mouth_open) return "angry";
+  if (Math.abs(lip_asym) > 0.03 && mouth_open < 0.06) return "disgust";
+  if (eyes_narrow) return "sleepy";
+  if (nose_cod > 0.03 && eye_open >= 0.18 && eye_open <= 0.26 && mouth_open < 0.06) return "thinking";
+  if (Math.abs(head_tilt) > 0.05 && eye_open > 0.18) return "confused";
+
+  return "neutral";
+}
+
+/* MediaPipe FaceMesh Setup */
+const faceMesh = new FaceMesh({
+  locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+});
+
+faceMesh.setOptions({
+  maxNumFaces: 1,
+  refineLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+
+let mpCamera = null;
+
+/* ON RESULTS */
+function onResults(results) {
+  canvasElement.width = videoElement.videoWidth;
+  canvasElement.height = videoElement.videoHeight;
+
+  canvasCtx.save();
+  canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+  canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+  if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+    emotionText.textContent = "No face";
+    jokeBox.style.display = "none";
+    lastEmotion = "No face";
+    canvasCtx.restore();
+    return;
+  }
+
+  const lm = results.multiFaceLandmarks[0];
+  drawConnectors(canvasCtx, lm, FACEMESH_TESSELATION, { color: '#C0C0C070', lineWidth: 1 });
+  drawLandmarks(canvasCtx, lm, { color: '#FF3030', radius: 1 });
+
+  const f = get_features_from_landmarks(lm);
+  const emotion = classify_emotion_js(f);
+  emotionText.textContent = emotion;
+
+  if (emotion === "sad") {
+    jokeBox.style.display = "block";
+    jokeBox.textContent = JOKES[Math.floor(Math.random()*JOKES.length)];
+    jokeBtn.style.display = "inline-block";
+  } else {
+    jokeBox.style.display = "none";
+    jokeBtn.style.display = "none";
+  }
+
+  const isSleepy = emotion.toLowerCase().includes("sleepy");
+  const wasSleepy = lastEmotion.toLowerCase().includes("sleepy");
+
+  if (isSleepy && !wasSleepy && audioUnlocked) {
+    sleepySound.currentTime = 0;
+    sleepySound.play().catch(console.warn);
+  }
+
+  if (!isSleepy && wasSleepy) {
+    sleepySound.pause();
+    sleepySound.currentTime = 0;
+  }
+
+  lastEmotion = emotion;
+  canvasCtx.restore();
+}
+
+faceMesh.onResults(onResults);
+
+/* Start Camera + Model */
+async function startCameraAndModel() {
+  loadingEl.style.display = "block";
+  startBtn.disabled = true;
+
+  try {
+    mpCamera = new Camera(videoElement, {
+      onFrame: async () => {
+        await faceMesh.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480
+    });
+
+    mpCamera.start();
+    await unlockAudio();
+
+    /* Show only canvas */
+    document.getElementById("camera-container").style.display = "block";
+    loadingEl.style.display = "none";
+  } catch (e) {
+    console.error("Camera error:", e);
+    loadingEl.textContent = "Camera error: " + e;
+    startBtn.disabled = false;
+  }
+}
+
+/* Handlers */
+startBtn.addEventListener("click", startCameraAndModel);
+jokeBtn.addEventListener("click", () => alert(jokeBox.textContent));
+
+</script>
 </body>
 </html>
