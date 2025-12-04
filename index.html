@@ -62,6 +62,7 @@ const unlockAudio = () => {
         sleepySound.pause();
         sleepySound.currentTime = 0;
         audioUnlocked = true;
+        console.debug("Audio unlocked");
     }).catch(err => console.log("Audio autoplay blocked:", err));
 };
 
@@ -90,11 +91,34 @@ startButton.onclick = async () => {
     /* ------------------------------ */
     ws.onopen = () => {
         console.log("WebSocket connected");
+        // heartbeat every 15s to keep connection alive and detect problems
+        window.__sentimo_heartbeat = setInterval(() => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                clearInterval(window.__sentimo_heartbeat);
+                return;
+            }
+            try {
+                ws.send(JSON.stringify({ type: "ping" }));
+                console.debug("Sent WS ping");
+            } catch (e) {
+                console.error("Heartbeat send error:", e);
+                clearInterval(window.__sentimo_heartbeat);
+            }
+        }, 15000);
     };
 
     /* ------------------------------ */
     ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+        // Log raw incoming message for debugging
+        console.log("WS incoming raw:", event.data);
+
+        let data = null;
+        try {
+            data = JSON.parse(event.data);
+        } catch (e) {
+            console.error("Error parsing WS message JSON:", e, "raw:", event.data);
+            return;
+        }
 
         // Emotion
         if (data.emotion) {
@@ -111,14 +135,16 @@ startButton.onclick = async () => {
             jokeBtn.style.display = "none";
         }
 
-        // Sleepy sound logic
-        const isSleepy = data.emotion.toLowerCase().includes("sleepy");
-        const wasSleepy = lastEmotion.toLowerCase().includes("sleepy");
+        // Sleepy sound logic (defensive: ensure data.emotion exists)
+        const emotionLower = (data.emotion || "").toLowerCase();
+        const isSleepy = emotionLower.includes("sleepy");
+        const wasSleepy = (lastEmotion || "").toLowerCase().includes("sleepy");
 
         if (audioUnlocked) {
             if (isSleepy && !wasSleepy) {
+                console.debug("Triggering sleepy sound (audioUnlocked=true)");
                 sleepySound.currentTime = 0;
-                sleepySound.play();
+                sleepySound.play().catch(err => console.warn("sleepySound.play() failed:", err));
             }
             if (!isSleepy && wasSleepy) {
                 sleepySound.pause();
@@ -126,13 +152,18 @@ startButton.onclick = async () => {
             }
         }
 
-        lastEmotion = data.emotion;
+        lastEmotion = data.emotion || "";
     };
 
-    /* ------------------------------ */
-    ws.onclose = () => {
-        console.log("WebSocket closed");
+    ws.onerror = (ev) => {
+        console.error("WebSocket error:", ev);
+    };
+    ws.onclose = (ev) => {
+        console.warn("WebSocket closed", ev);
         loadingSpinner.style.display = "block";
+        if (window.__sentimo_heartbeat) {
+            clearInterval(window.__sentimo_heartbeat);
+        }
     };
 
     /* ------------------------------
@@ -144,22 +175,28 @@ startButton.onclick = async () => {
     video.play();
 
     setInterval(() => {
-        if (ws.readyState !== WebSocket.OPEN) return;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
         // Draw frame to canvas
         const canvas = document.createElement("canvas");
-        canvas.width = 640;
-        canvas.height = 480;
+        canvas.width = 320;
+        canvas.height = 240;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Convert to JPEG base64
-        const frame = canvas.toDataURL("image/jpeg");
+        // Convert to JPEG base64 (smaller / lower quality)
+        const frame = canvas.toDataURL("image/jpeg", 0.4);
 
         // Display webcam in UI
         videoFeed.src = frame;
 
-        ws.send(JSON.stringify({ frame: frame }));
+        // Log and send (defensive)
+        console.log("Attempting to send frame, ws.readyState=", ws && ws.readyState, "frameBytes=", frame.length);
+        try {
+            ws.send(JSON.stringify({ frame: frame }));
+        } catch (err) {
+            console.error("ws.send error:", err);
+        }
 
     }, 120);  // ~8 FPS for performance
 };
