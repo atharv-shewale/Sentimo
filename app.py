@@ -12,36 +12,26 @@ import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.websockets import WebSocketState
 
 # ----------------------------
-# IMPORT / EMBED YOUR CLASSIFIER
+# Try to import your classifier module
 # ----------------------------
-# If you already have emotion_classifier.py exposing facemesh, get_features,
-# classify_emotion and JOKES, you can import them instead:
-#
-# from emotion_classifier import facemesh, get_features, classify_emotion, JOKES
-#
-# For simplicity this file expects that you have an emotion_classifier.py
-# with the required objects. If not, move the functions below into a separate
-# module or paste your classifier here.
-#
 try:
+    # Expected to provide: facemesh, get_features, classify_emotion, JOKES
     from emotion_classifier import facemesh, get_features, classify_emotion, JOKES
 except Exception:
-    # If import fails, attempt to create a lightweight fallback to avoid import errors
-    # (Real classification will likely not work with this fallback. Replace with your module.)
     facemesh = None
     JOKES = ["Why don't scientists trust atoms? Because they make up everything!"]
 
     def get_features(landmarks):
-        # Minimal dummy values to avoid crashes; replace with your real function.
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     def classify_emotion(*args, **kwargs):
         return "neutral"
 
 # ----------------------------
-# APPLICATION & LOGGING SETUP
+# Logging and app setup
 # ----------------------------
 logger = logging.getLogger("sentimo")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -49,7 +39,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# last emotion persistence for debugging
 LAST_EMOTION_FILE = "/tmp/last_emotion.txt"
 
 
@@ -63,7 +52,6 @@ def save_last_emotion(emotion: str):
 
 @app.get("/")
 async def index():
-    # Serve index.html from repo root
     with open("index.html", "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
@@ -90,12 +78,18 @@ async def last():
 
 
 # ----------------------------
-# Helper functions
+# Helpers
 # ----------------------------
+def base64_b64decode(s: str) -> bytes:
+    import base64
+    if isinstance(s, str):
+        s = s.encode("utf-8")
+    return base64.b64decode(s)
+
+
 def decode_frame_to_bgr(frame_data_b64: str):
     """
-    Decode base64 JPEG string to BGR image (cv2 format).
-    Accepts either a raw base64 image string or data URI ("data:image/...,base64,...")
+    Decode base64 JPEG string (optionally data URI) to BGR image (cv2 format).
     """
     if not frame_data_b64:
         return None
@@ -111,26 +105,18 @@ def decode_frame_to_bgr(frame_data_b64: str):
         return None
 
 
-def base64_b64decode(s: str) -> bytes:
-    # Local wrapper to avoid importing base64 everywhere, and to safely handle str/bytes
-    import base64
-    if isinstance(s, str):
-        s = s.encode("utf-8")
-    return base64.b64decode(s)
-
-
 def process_frame_and_classify(frame_bgr) -> Tuple[str, str]:
     """
-    Downscale, convert to RGB, run mediapipe (facemesh), extract features and classify.
-    This function is CPU-bound and must be called inside asyncio.to_thread.
+    Downscale, convert to RGB, run mediapipe facemesh, and classify.
+    Offload this to asyncio.to_thread to avoid blocking the event loop.
+    Returns: (emotion, joke_or_None)
     """
     try:
-        # small resize for performance
+        # Downscale for performance
         small = cv2.resize(frame_bgr, (320, 240))
         rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
         if facemesh is None:
-            # fallback classifier (if real facemesh not available)
             return "neutral", None
 
         results = facemesh.process(rgb)
@@ -148,48 +134,44 @@ def process_frame_and_classify(frame_bgr) -> Tuple[str, str]:
 
 
 # ----------------------------
-# WebSocket endpoint (low-level receive; supports JSON/base64 + binary Blobs)
+# WebSocket endpoint (supports binary blobs + JSON)
 # ----------------------------
-from fastapi import WebSocket
-from starlette.websockets import WebSocketState
-
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    logger.info("WebSocket client connected (low-level receive)")
+    logger.info("WebSocket client connected (binary-capable)")
 
     try:
         while True:
-            # Low-level receive: catches text or bytes payloads
+            # Low-level receive: returns dict with 'type' and either 'text' or 'bytes'
             msg = await websocket.receive()
-            # msg typically contains: {"type":"websocket.receive","text": "..."} or {"type":"websocket.receive","bytes": b'...'}
             mtype = msg.get("type")
             if mtype == "websocket.disconnect":
-                logger.info("Received websocket.disconnect")
+                logger.info("websocket.disconnect received")
                 break
 
-            # TEXT payload (JSON)
+            # TEXT payload
             if "text" in msg and msg["text"] is not None:
                 txt = msg["text"]
                 logger.info("Received text payload len=%d", len(txt))
-                # try parse JSON
                 try:
                     data = json.loads(txt)
                 except Exception:
                     logger.exception("Failed to parse JSON text payload")
-                    # skip if invalid
                     continue
 
-                # handle ping JSON
+                # heartbeat ping/pong
                 if isinstance(data, dict) and data.get("type") == "ping":
-                    await websocket.send_json({"type": "pong"})
-                    logger.info("Handled ping->pong")
+                    try:
+                        await websocket.send_json({"type": "pong"})
+                        logger.info("Handled ping->pong")
+                    except Exception:
+                        logger.exception("Failed to send pong")
                     continue
 
-                # handle base64-framed JSON
+                # if client still sends base64 JSON frames (optional)
                 if isinstance(data, dict) and data.get("frame"):
                     logger.info("Received base64 frame; payload len=%d", len(data.get("frame")))
-                    # decode -> process in a thread
                     try:
                         frame = await asyncio.to_thread(decode_frame_to_bgr, data.get("frame"))
                         if frame is None:
@@ -205,25 +187,23 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_json({"emotion": "error", "joke": None})
                     continue
 
-            # BINARY payload (bytes)
+            # BINARY payload
             if "bytes" in msg and msg["bytes"] is not None:
                 b = msg["bytes"]
                 logger.info("Received binary frame, size=%d", len(b))
-                # decode image bytes to cv2 frame
                 try:
                     nparr = np.frombuffer(b, np.uint8)
                     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 except Exception:
-                    logger.exception("Failed to decode binary frame buffer")
+                    logger.exception("Failed to decode binary frame")
                     await websocket.send_json({"emotion": "error", "joke": None})
                     continue
 
                 if frame is None:
-                    logger.warning("cv2.imdecode returned None for binary frame")
+                    logger.warning("cv2.imdecode returned None")
                     await websocket.send_json({"emotion": "error", "joke": None})
                     continue
 
-                # offload heavy processing
                 try:
                     emotion, joke = await asyncio.to_thread(process_frame_and_classify, frame)
                     await websocket.send_json({"emotion": emotion, "joke": joke})

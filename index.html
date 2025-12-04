@@ -44,6 +44,7 @@ h1{font-size:2.4em;color:#3c3b6e;}
 let ws = null;
 let lastEmotion = "";
 let audioUnlocked = false;
+let sendInFlight = false;
 
 const sleepySound = document.getElementById("sleepy-sound");
 const startButton = document.getElementById("start-btn");
@@ -76,10 +77,6 @@ startButton.onclick = async () => {
 
     unlockAudio();
 
-    /* ------------------------------
-        AUTO WEBSOCKET URL FIX
-        (Works on localhost + Render)
-    ------------------------------ */
     const wsURL =
         (location.protocol === "https:" ? "wss://" : "ws://") +
         location.host +
@@ -88,15 +85,11 @@ startButton.onclick = async () => {
     console.log("Connecting to WebSocket:", wsURL);
     ws = new WebSocket(wsURL);
 
-    /* ------------------------------ */
     ws.onopen = () => {
         console.log("WebSocket connected");
-        // heartbeat every 15s to keep connection alive and detect problems
+        // heartbeat every 15s
         window.__sentimo_heartbeat = setInterval(() => {
-            if (!ws || ws.readyState !== WebSocket.OPEN) {
-                clearInterval(window.__sentimo_heartbeat);
-                return;
-            }
+            if (!ws || ws.readyState !== WebSocket.OPEN) { clearInterval(window.__sentimo_heartbeat); return; }
             try {
                 ws.send(JSON.stringify({ type: "ping" }));
                 console.debug("Sent WS ping");
@@ -107,9 +100,7 @@ startButton.onclick = async () => {
         }, 15000);
     };
 
-    /* ------------------------------ */
     ws.onmessage = (event) => {
-        // Log raw incoming message for debugging
         console.log("WS incoming raw:", event.data);
 
         let data = null;
@@ -117,15 +108,15 @@ startButton.onclick = async () => {
             data = JSON.parse(event.data);
         } catch (e) {
             console.error("Error parsing WS message JSON:", e, "raw:", event.data);
+            // clear in-flight so next frame can be sent
+            sendInFlight = false;
             return;
         }
 
-        // Emotion
         if (data.emotion) {
             emotionText.textContent = data.emotion;
         }
 
-        // Jokes
         if (data.joke) {
             jokeBox.style.display = "block";
             jokeBox.textContent = data.joke;
@@ -135,7 +126,6 @@ startButton.onclick = async () => {
             jokeBtn.style.display = "none";
         }
 
-        // Sleepy sound logic (defensive: ensure data.emotion exists)
         const emotionLower = (data.emotion || "").toLowerCase();
         const isSleepy = emotionLower.includes("sleepy");
         const wasSleepy = (lastEmotion || "").toLowerCase().includes("sleepy");
@@ -153,6 +143,8 @@ startButton.onclick = async () => {
         }
 
         lastEmotion = data.emotion || "";
+        // allow next send after server reply
+        sendInFlight = false;
     };
 
     ws.onerror = (ev) => {
@@ -161,44 +153,82 @@ startButton.onclick = async () => {
     ws.onclose = (ev) => {
         console.warn("WebSocket closed", ev);
         loadingSpinner.style.display = "block";
-        if (window.__sentimo_heartbeat) {
-            clearInterval(window.__sentimo_heartbeat);
-        }
+        if (window.__sentimo_heartbeat) { clearInterval(window.__sentimo_heartbeat); }
     };
 
     /* ------------------------------
-        CAMERA STREAM → SEND FRAMES
+        CAMERA STREAM → SEND FRAMES (binary + throttled)
     ------------------------------ */
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
     const video = document.createElement("video");
+    video.setAttribute("playsinline", "");
+    video.muted = true;
     video.srcObject = stream;
-    video.play();
+    await video.play();
 
-    setInterval(() => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    // small canvas for sending
+    const sendCanvas = document.createElement("canvas");
+    sendCanvas.width = 320;
+    sendCanvas.height = 240;
+    const sendCtx = sendCanvas.getContext("2d");
 
-        // Draw frame to canvas
-        const canvas = document.createElement("canvas");
-        canvas.width = 320;
-        canvas.height = 240;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // preview canvas for UI (keeps UI smooth)
+    const previewCanvas = document.createElement("canvas");
+    const previewCtx = previewCanvas.getContext("2d");
 
-        // Convert to JPEG base64 (smaller / lower quality)
-        const frame = canvas.toDataURL("image/jpeg", 0.4);
+    let lastSend = 0;
+    const SEND_INTERVAL_MS = 300; // ~3 FPS (safe for Render free instance)
+    const PREVIEW_UPDATE_MS = 100; // update UI preview ~10 times/sec
 
-        // Display webcam in UI
-        videoFeed.src = frame;
-
-        // Log and send (defensive)
-        console.log("Attempting to send frame, ws.readyState=", ws && ws.readyState, "frameBytes=", frame.length);
+    function updatePreview() {
+        const w = Math.min(video.videoWidth || 640, 640);
+        const h = Math.min(video.videoHeight || 480, 480);
+        previewCanvas.width = w;
+        previewCanvas.height = h;
+        previewCtx.drawImage(video, 0, 0, w, h);
         try {
-            ws.send(JSON.stringify({ frame: frame }));
-        } catch (err) {
-            console.error("ws.send error:", err);
+            videoFeed.src = previewCanvas.toDataURL("image/jpeg", 0.6);
+        } catch (e) {
+            // ignore preview errors
         }
+        setTimeout(updatePreview, PREVIEW_UPDATE_MS);
+    }
+    updatePreview();
 
-    }, 120);  // ~8 FPS for performance
+    // send loop (throttled). We also use sendInFlight to avoid flooding server.
+    const sendTicker = setInterval(() => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if (sendInFlight) return;
+
+        const now = performance.now();
+        if (now - lastSend < SEND_INTERVAL_MS) return;
+        lastSend = now;
+        sendInFlight = true;
+
+        // draw to send canvas and send as binary blob
+        sendCtx.drawImage(video, 0, 0, sendCanvas.width, sendCanvas.height);
+
+        // update preview quickly too (keeps UI responsive)
+        try {
+            videoFeed.src = sendCanvas.toDataURL("image/jpeg", 0.6);
+        } catch (e) {}
+
+        sendCanvas.toBlob((blob) => {
+            if (!blob) { sendInFlight = false; return; }
+            try {
+                ws.send(blob);
+                console.debug("Sent binary frame, size=", blob.size);
+            } catch (err) {
+                console.error("ws.send(blob) error:", err);
+                sendInFlight = false;
+            }
+        }, "image/jpeg", 0.5);
+
+    }, 80); // poll interval; actual sends controlled by SEND_INTERVAL_MS
+
+    ws.addEventListener("close", () => {
+        clearInterval(sendTicker);
+    });
 };
 
 /* ------------------------------
